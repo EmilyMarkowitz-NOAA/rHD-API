@@ -1,0 +1,148 @@
+---
+title: "R workshop - NFMS FOSS Landings and Trade APIs"
+author: "Ben Fissel"
+date: "9/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) 
+library(httr)
+library(jsonlite)
+```
+
+## Why use the NMFS FOSS API
+
+NMFS has newly updated web interfaces for accessing landings
+
+<br>
+<https://foss.nmfs.noaa.gov/apexfoss/f?p=215:200::::::>
+<br>
+
+and trade data.
+<br>
+<https://foss.nmfs.noaa.gov/apexfoss/f?p=215:2>
+<br>
+
+These interfaces provide a convenient way to access for single use or exploratory data pulls. Web interfaces have a some inherent drawbacks that using the API can helps resolve. APIs provide a means to pull landings and trade data using code within your R script. Some advantages to using an API are:
+
+* Facilitates reporoducibility of your analysis.
+* Allows you to automate analyses that are performed periodically (e.g., annually).
+* The API includes some data that web interface does not (e.g., HTS codes).
+* Facilitates adaptation of the analysis to different purposes.
+* Reduces the possibility of human error.
+
+## How it works
+
+Querying an API works by sending a Hypertext Transfer Protocol (HTTP) request to NMFS FOSS server.The parameters of the HTTP request are contained in the URL and specify the requested data. The server then returns a response and if the request is properly formed the data that you request.
+
+There are two R packages that can be used to query the API and get data into a usable format (e.g., a dataframe). The package *httr* is tool for working with URLs and HTTP and is what we'll use to query the API. As with any package, one can google 'httr R package', or something similar, and you can find homepage for the package <br><https://cran.r-project.org/web/packages/httr/index.html><br> which has links to a manual and vignettes (i.e., tutorials). Your google search may bring up other kinds of tutorials which could be helpful as well. The second pacakge that we'll use is *jsonlite* <br><https://cran.r-project.org/web/packages/jsonlite/index.html><br> which is used for working with data in JSON format within R.
+
+The API endpoint for the trade data is  <br><https://www.st.nmfs.noaa.gov/ords/foss/trade_data/><br>. Entering this URL into a browser will return the first 25 rows of data (by default) from the database in JSON format to your browser. In order to return this data into R rather than your browser we'll use the function from the *GET()* function from the httr package. 
+
+```{r}
+response <- GET("https://www.st.nmfs.noaa.gov/ords/foss/trade_data")
+response
+str(response)
+```
+
+Passing 'response' to R tells it to print to the console. What gets printed depends on how the author of *httr* who wrote the print methods. To see a full breakdown of what's in the object 'response' use the *str()* function.
+
+Take note of the status code. A successful response from the API will have a status code of 200. Any other status code is considered a failure, but different codes can indicate in which way the request failed.
+
+Next we'll use the *content()* function to extract the contents. Then the *fromJSON()* function to convert the data from JSON into an R format.
+
+```{r}
+df <- content(response, as = "text", encoding = "UTF-8")
+df <- fromJSON(df, flatten = TRUE) %>% data.frame()
+head(df)
+str(df)
+```
+
+After this there is still a little bit of cleanup to do on the data. We'll drop the following variables but I'll breifly list them below as they could be useful.
+
+* items.links: I think is static link the to the record on the foss server.
+* limit: is the number of observations that the response was limited to (server default is 25).
+* hasMore: if TRUE indicates that there is more data.
+* offset: retireive observations starting with the offset value.
+* count: the numbers of observations returned.
+* links.rel: not exactly sure, but haven't found a use for it. 
+* links.href: not exactly sure, but haven't found a use for it. 
+
+Also, note that the variables year, and month are character and it would be nice for them to be numeric. Finally, I'll remove "items." from the beginning of the variable names.
+
+```{r}
+df <- transform(df, items.year=as.numeric(items.year), 
+                items.month = as.numeric(items.month),
+                links.rel = NULL, links.href = NULL,
+                items.links = NULL, hasMore = NULL, 
+                limit = NULL, offset = NULL, count = NULL)
+str(df)
+head(df)
+```
+
+names(df) <- sub("items.","",names(df), fixed= TRUE)
+
+
+The meta-data catalogue for the trade data can be found here
+<br><https://www.st.nmfs.noaa.gov/ords/foss/metadata-catalog/trade_data/><br>.
+It's not that straight forward to read. This shows the variable types one the serve.
+
+Also, the API endpoint for the landings data is 
+<br><https://www.st.nmfs.noaa.gov/ords/foss/landings/><br>
+and the meta-data can be found here
+<br><https://www.st.nmfs.noaa.gov/ords/foss/metadata-catalog/landings/><br>
+
+Now that we know we can get data off of the server and get it into a usable format we just need to figure out how to get the data that we want. The way we do this is by carefully adding parameters to the end of the URL that we pass to the API. The set of parameters that we can pass are described in the meta-data catalouge. 
+
+For example, 
+<br><https://www.st.nmfs.noaa.gov/ords/foss/trade_data/?q={"year":"2019"}><br>
+returns the first 25 for the year 2019.
+
+Using the *GET()* function we can retrieve the data in R with
+
+```{r}
+response <- GET('https://www.st.nmfs.noaa.gov/ords/foss/trade_data',
+                query = list(q = '{"year":"2019"}', limit = 10000))
+status_code(response)
+```
+
+Modeled somewhat after the web interface I've created functions for getting data from the NMFS trade and landings databases through the API.
+
+You can load the functions into R by sourcing them from wherever they are loacted on your computer.
+```{r}
+source('~/projects/afsc/NMFSDataAPI/nmfsLandingsData.R')
+source('~/projects/afsc/NMFSDataAPI/nmfsTradeData.R')
+```
+
+In the web interface the user chooses the trade type (imports/exports) years, product, and country. These functions require you to enter trade type, product type, and years.
+
+The function still fairly rudimentary. It takes as arguments the products listed on the trade data web interface. For example, for groundfish exports from 2019 through all month available in 2020.
+```{r}
+plk.trd <- nmfsTradeData(prodType = "GROUNDFISH", tradeType = "EXP", 
+                     fromYr = 2019, toYr = 2020)
+```
+The function essentially performs the operations above.
+
+Similarly, I have a function for extracting landings data. It takes as arguments the species, landings type, and years.
+```{r}
+plk.lnd <- nmfsLandingsData(species = "pollock, walleye", landingsType = "Commercial", 
+                     fromYr = 2018, toYr = 2019)
+```
+
+
+These functions are yours now. Use them, improve them, share them.
+
+## Resources
+
+Cameron Spier also has a tutorial he shared on accessing APIs that he shared a little a couple weeks ago. I used some of his material here. Thanks!
+
+*Querying APIs in R* gives examples of using R to get data from an API.
+<br>
+<https://medium.com/@traffordDataLab/querying-apis-in-r-39029b73d5f1>
+<br>
+
+*Introduction to APIs* is a tutorial on using APIs more generally.
+<br>
+<https://www.earthdatascience.org/courses/earth-analytics/get-data-using-apis/intro-to-programmatic-data-access-r/> <br>
