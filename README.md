@@ -1,5 +1,5 @@
 # rHD-API
-This code was developed by Ben Fissel and I am just hosting it for him!
+This code was developed by Ben Fissel and I am just hosting it for him! This work was shared at the R Workshop for Social Scientists held in September 2020 (https://emilyhmarkowitz.github.io/RWorkshopForSocialScientists/). 
 
 ## NOAA README
 
